@@ -345,7 +345,6 @@ async function main() {
       continue;
     }
     let gasMultiplier = 0;
-    console.log(sortedRoutes[0]);
     const path = sortedRoutes[0].path.map((route) => {
       const nextPool: any = poolsBody?.data?.pools.find(
         (poolAddress) => poolAddress.contractAddress === route

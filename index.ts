@@ -213,7 +213,6 @@ async function main() {
   } catch (e:any) {
     logger.error('Error fetching stability pool info', now, e?.message);
   }
-  console.log(JSON.stringify(stabilityPoolInfoQuery, null, 2));
 
   const stabilityPoolSilkAmountRaw = stabilityPoolInfoQuery?.pool_info?.total_silk_deposited 
     !== undefined 

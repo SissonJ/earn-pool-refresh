@@ -1,5 +1,6 @@
 export type Results = {
   silkAmount: number,
+  stabilityPoolAmount: number,
   start?: number,
   lastUpdate?: number,
   lastFailed?: number,

@@ -30,8 +30,11 @@ if(!process.env.NODE
    || !process.env.SHADE_LEND_PERMIT
    || !process.env.GRAPHQL
    || !process.env.SILK_TOKEN_ADDRESS
+   || !process.env.SHD_TOKEN_ADDRESS
    || !process.env.ROUTER_ADDRESS
    || !process.env.SILK_VIEWING_KEY
+   || !process.env.BOT_TOKEN
+   || !process.env.TESTING_CHAT_ID
   ) {
   throw new Error('Missing env variables are required in the .env file');
 }
@@ -128,6 +131,7 @@ async function main() {
   if (!fs.existsSync(`./results.txt`)) {
     const initialState: Results = { 
       silkAmount: 0,
+      stabilityPoolAmount: 0,
       queryLength: [], 
       successfulTxs: 0,
       failedTxs: 0,
@@ -199,9 +203,28 @@ async function main() {
     return reward[1] !== '0';
   });
 
+  let stabilityPoolInfoQuery: any;
+  try {
+    stabilityPoolInfoQuery = await client.query.compute.queryContract({
+      contract_address: process.env.STABILITY_POOL_ADDRESS!,
+      code_hash: process.env.STABILITY_POOL_CODE_HASH,
+      query: { get_pool_info: {}, }, 
+    });
+  } catch (e:any) {
+    logger.error('Error fetching stability pool info', now, e?.message);
+  }
+  console.log(JSON.stringify(stabilityPoolInfoQuery, null, 2));
+
+  const stabilityPoolSilkAmountRaw = stabilityPoolInfoQuery?.pool_info?.total_silk_deposited 
+    !== undefined 
+    ? Number(stabilityPoolInfoQuery?.pool_info?.total_silk_deposited)
+    : results.stabilityPoolAmount;
+  const stabilityPoolSilkAmount = stabilityPoolSilkAmountRaw / 10**18;
+
   // 2 because SHD will always be present
   if(claimableRewards.length < 2) {
     results.silkAmount = Number(stabilityPoolQuery.user_data.remaining_silk);
+    results.stabilityPoolAmount = stabilityPoolSilkAmount;
     fs.writeFileSync(`./results.txt`, JSON.stringify(results, null, 2));
     return;
   }
@@ -295,6 +318,7 @@ async function main() {
     fs.writeFileSync(`./results.txt`, JSON.stringify(results, null, 2));
     return;
   }
+
   query = `
     query Tokens {
       tokens(query: {
@@ -316,7 +340,6 @@ async function main() {
       }
     }
   `;
-
   const gqlTokenResp = await fetch(process.env.GRAPHQL!, {
       method: "POST",
       headers: { "Content-Type": "application/json", },
@@ -328,8 +351,33 @@ async function main() {
     fs.writeFileSync(`./results.txt`, JSON.stringify(results, null, 2));
     return;
   }
+
+  query = `
+    query Prices {
+      prices(query: {}) {
+        id
+        value
+      }
+    }
+  `;
+  const gqlPriceResp = await fetch(process.env.GRAPHQL!, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", },
+      body: JSON.stringify({ query, })
+  });
+  const priceBody: GraphQLResponse<{
+    prices:{id: string; value:number}[],
+  }> = await gqlPriceResp.json();
+  if (priceBody.errors || priceBody.data == undefined) {
+    results.failedQueries += 1;
+  }
+
   const formmattedPoolsAndTokens = mapGQLResponseToTarget(poolsBody.data, tokenBody.data);
+  const collateralLiquidationAmounts: any[] = [];
   for(const reward of claimableRewards) {
+    if(reward[0].contract.address === process.env.SILK_TOKEN_ADDRESS) {
+      continue;
+    }
     const routes = getRoutes({
       inputTokenAmount: BigNumber(reward[1]),
       inputTokenContractAddress: reward[0].contract.address,
@@ -404,6 +452,73 @@ async function main() {
       logger.info(`SWAP ATTEMPT FAILED - ${swapExecuteResponse?.transactionHash}`, now);
       logger.info(JSON.stringify(swapExecuteResponse?.rawLog), now);
     }
+
+    /* ------------------------------------------------------------------------------------------ */
+
+    if(reward[0].contract.address === process.env.SHD_TOKEN_ADDRESS) {
+      continue;
+    }
+
+    const percentOfPool = results.silkAmount / results.stabilityPoolAmount;
+    const collateralRaw = (Number(reward[1]) / percentOfPool) / 0.97;
+    const collateralToken = tokenBody.data.tokens.find(
+      (token) => token.contractAddress === reward[0].contract.address
+    );
+    if(!collateralToken) {
+      continue;
+    }
+    const collateralAmount = collateralRaw * (10 ** collateralToken.Asset.decimals);
+    const price = priceBody?.data?.prices?.find((apiPrice) => {
+      const tokenPriceIds = collateralToken?.PriceToken.map(
+        (priceToken) => priceToken.priceId
+      ) ?? [];
+      return tokenPriceIds.includes(apiPrice.id) && apiPrice.value !== null && apiPrice.value > 0;
+    });
+    if(!price) {
+      continue;
+    }
+    const collateralValue = collateralAmount * price.value;
+    collateralLiquidationAmounts.push({
+     symbol: collateralToken.symbol, amount: collateralValue 
+    });
+  }
+
+  const debtToken = tokenBody.data.tokens.find(
+    (token) => token.contractAddress === process.env.SILK_TOKEN_ADDRESS
+  );
+  const price = priceBody?.data?.prices?.find((apiPrice) => {
+    const tokenPriceIds = debtToken?.PriceToken.map(
+      (priceToken) => priceToken.priceId
+    ) ?? [];
+    return tokenPriceIds.includes(apiPrice.id) && apiPrice.value !== null && apiPrice.value > 0;
+  });
+  const debtAmount = results.stabilityPoolAmount - stabilityPoolSilkAmount;
+
+  if(collateralLiquidationAmounts.length > 0 && price && debtToken) {
+    let body = "🚨 *Silk Liquidation Alert* 🚨\n\n";
+    body += "🕒 *Time*: " + now.toISOString() + "\n";
+    body += "🔒 *Type*: Silk Liquidation\n";
+    let protocolProfit = 0;
+    collateralLiquidationAmounts.forEach((collateral) => {
+      body += "💰 *Collateral*: $" + collateral.amount.toFixed(2) + 
+        " " + collateral.symbol + "\n";
+      protocolProfit += collateral.amount * 0.02;
+    });
+    const debtValue = debtAmount * price.value;
+    body += "💸 *Debt*: $" + debtValue.toFixed(2) + " " + debtToken.symbol + "\n";
+    body += "🏦 *Protocol Profit*: $" + protocolProfit.toFixed(2) + "\n";
+
+    await fetch(
+      `https://api.telegram.org/bot${process.env.BOT_TOKEN!}/sendMessage`, 
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            chat_id: process.env.TESTING_CHAT_ID,
+            text: body,
+            parse_mode: "Markdown"
+        })
+    });
   }
 
   let balance;
@@ -478,6 +593,7 @@ async function main() {
   }
 
   results.silkAmount = Number(stabilityPoolQuery.user_data.remaining_silk) + Number(balance);
+  results.stabilityPoolAmount = stabilityPoolSilkAmount + Number(balance);
   fs.writeFileSync(`./results.txt`, JSON.stringify(results, null, 2));
 }
 

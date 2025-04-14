@@ -330,6 +330,9 @@ async function main() {
   }
   const formmattedPoolsAndTokens = mapGQLResponseToTarget(poolsBody.data, tokenBody.data);
   for(const reward of claimableRewards) {
+    if(reward[0].contract.address === process.env.SILK_TOKEN_ADDRESS) {
+      continue;
+    }
     const routes = getRoutes({
       inputTokenAmount: BigNumber(reward[1]),
       inputTokenContractAddress: reward[0].contract.address,

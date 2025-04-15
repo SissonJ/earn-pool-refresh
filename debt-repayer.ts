@@ -43,6 +43,7 @@ if(!process.env.NODE
    || !process.env.MONEY_MARKET_ADDRESS
    || !process.env.SHADE_MASTER_PERMIT
    || !process.env.SILK_TOKEN_ADDRESS
+   || !process.env.SHADE_TOKEN_ADDRESS
   ) {
   throw new Error('Missing env variables are required in the .env file');
 }
@@ -209,10 +210,12 @@ async function main() {
       silkInStabilityPool = queryData.user_data.remaining_silk;
       claimableRewards = queryData.user_data.claimable_rewards.reduce((
         prev: number, 
-        curr: number[]
+        curr: any[]
       ) => {
         if(Number(curr[1]) > 0) {
-          return prev + 1;
+          if(curr[0].contract.address !== process.env.SHADE_TOKEN_ADDRESS) {
+            return prev + 1;
+          }
         }
         return prev;
       }, 0);
@@ -222,7 +225,7 @@ async function main() {
         (nextDebt: any) => nextDebt.token === process.env.SILK_TOKEN_ADDRESS!
       );
       if(silkDebt !== undefined) {
-        totalSilkDebt = Number(silkDebt.principal) + Number(silkDebt.interest_accrued);
+        totalSilkDebt = Number(silkDebt.principal) + Number(silkDebt.interest_accrued) * 1.01;
       }
     }
   });
@@ -230,7 +233,7 @@ async function main() {
   // If tx threshold is not met
   if(totalSilkDebt === 0 
     || silkInStabilityPool < totalSilkDebt 
-    || claimableRewards > 1
+    || claimableRewards > 0
   ) {
     fs.writeFileSync('./repayerResults.txt', JSON.stringify(results, null, 2));
     return;

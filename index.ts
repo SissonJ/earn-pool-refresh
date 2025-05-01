@@ -460,7 +460,7 @@ async function main() {
       continue;
     }
 
-    const percentOfPool = results.silkAmount / results.stabilityPoolAmount;
+    const percentOfPool = results.silkAmount / (results.stabilityPoolAmount * 10**6);
     const collateralRaw = (Number(reward[1]) / percentOfPool) / 0.97;
     const collateralToken = tokenBody.data.tokens.find(
       (token) => token.contractAddress === reward[0].contract.address
@@ -468,7 +468,7 @@ async function main() {
     if(!collateralToken) {
       continue;
     }
-    const collateralAmount = collateralRaw * (10 ** collateralToken.Asset.decimals);
+    const collateralAmount = collateralRaw / (10 ** collateralToken.Asset.decimals);
     const price = priceBody?.data?.prices?.find((apiPrice) => {
       const tokenPriceIds = collateralToken?.PriceToken.map(
         (priceToken) => priceToken.priceId

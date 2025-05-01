@@ -22,6 +22,8 @@ import BigNumber from 'bignumber.js';
 
 config();
 
+const stableCollateral = ['USDC.axl'];
+
 if(!process.env.NODE 
    || !process.env.CHAIN_ID
    || !process.env.PRIVATE_KEY
@@ -491,20 +493,24 @@ async function main() {
     ) ?? [];
     return tokenPriceIds.includes(apiPrice.id) && apiPrice.value !== null && apiPrice.value > 0;
   });
-  const debtAmount = results.stabilityPoolAmount - stabilityPoolSilkAmount;
 
   if(collateralLiquidationAmounts.length > 0 && price && debtToken) {
     let body = "🚨 *Silk Liquidation Alert* 🚨\n\n";
     body += "🕒 *Time*: " + now.toISOString() + "\n";
     body += "🔒 *Type*: Silk Liquidation\n";
     let protocolProfit = 0;
+    let debtValueFromCollateral = 0;
     collateralLiquidationAmounts.forEach((collateral) => {
       body += "💰 *Collateral*: $" + collateral.amount.toFixed(2) + 
         " " + collateral.symbol + "\n";
       protocolProfit += collateral.amount * 0.02;
+      if(stableCollateral.includes(collateral.symbol)) {
+        debtValueFromCollateral += collateral.amount * (1 - 0.05);
+      } else {
+        debtValueFromCollateral += collateral.amount * (1 - 0.10);
+      }
     });
-    const debtValue = debtAmount * price.value;
-    body += "💸 *Debt*: $" + debtValue.toFixed(2) + " " + debtToken.symbol + "\n";
+    body += "💸 *Debt*: $" + debtValueFromCollateral.toFixed(2) + " " + debtToken.symbol + "\n";
     body += "🏦 *Protocol Profit*: $" + protocolProfit.toFixed(2) + "\n";
 
     await fetch(

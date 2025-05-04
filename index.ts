@@ -206,6 +206,16 @@ async function main() {
     return;
   }
 
+  const preSwapBalance = await client.query.snip20.getBalance({
+    contract: {
+      address: process.env.SILK_TOKEN_ADDRESS!,
+      code_hash: process.env.SILK_TOKEN_CODE_HASH!,
+    },
+    address: client.address,
+    auth: { key: process.env.SILK_VIEWING_KEY! }
+  });
+
+
   let executeResponse;
   try {
     logger.info(`ATTEMPTING - CLAIM`, now);
@@ -430,10 +440,11 @@ async function main() {
     retry++;
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
-  if(balance === undefined) {
+  if(balance === undefined || balance === preSwapBalance.balance.amount) {
     fs.writeFileSync('./results.txt', JSON.stringify(results, null, 2));
     throw new Error('Silk balance undefined');
   }
+  balance = (Number(balance) - Number(preSwapBalance.balance.amount)).toString();
 
   const depositExecuteResponse = await client.tx.broadcast([new MsgExecuteContract({ 
       sender: client.address, 
